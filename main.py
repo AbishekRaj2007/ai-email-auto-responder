@@ -5,6 +5,8 @@ import base64
 import re
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
+import time
+from datetime import datetime
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -177,4 +179,14 @@ def read_and_reply(service):
 # ---------------- RUN ----------------
 if __name__ == '__main__':
     service = authenticate_gmail()
-    read_and_reply(service)
+
+    INTERVAL_SECONDS = 30  # 👈 30 seconds
+
+    print("📧 AI Auto Email Responder started...")
+    print(f"⏱️ Checking inbox every {INTERVAL_SECONDS // 60} minutes\n")
+
+    while True:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Checking emails...")
+        read_and_reply(service)
+        print("Sleeping...\n")
+        time.sleep(INTERVAL_SECONDS)
