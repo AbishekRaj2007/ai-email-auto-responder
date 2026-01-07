@@ -1,18 +1,29 @@
 from __future__ import print_function
+import os
 import os.path
 import base64
 import re
 from email.mime.text import MIMEText
+from dotenv import load_dotenv
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+from groq import Groq
+
+# ---------------- LOAD ENV ----------------
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 # ---------------- CONFIG ----------------
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 LABEL_NAME = "AUTO_REPLIED"
-ALLOWED_EMAIL = "rrabishekraj18@gmail.com"   # 👈 ONLY THIS MAIL WILL GET REPLY
+ALLOWED_EMAIL = "someone@gmail.com"   # 👈 only this email gets reply
+
+# ---------------- GROQ CLIENT ----------------
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 # ---------------- AUTH ----------------
 def authenticate_gmail():
@@ -61,25 +72,46 @@ def extract_email(from_header):
     match = re.search(r'<(.+?)>', from_header)
     return match.group(1) if match else from_header
 
-def create_reply(to_email, subject):
-    body = (
-        "Hello,\n\n"
-        "Thank you for reaching out. This is an automated response confirming "
-        "that your email has been received.\n\n"
-        "Best regards"
+# ---------------- GROQ AI ----------------
+def generate_ai_reply(sender, subject):
+    prompt = f"""
+You are a professional email assistant.
+
+Write a polite, concise, professional reply to this email.
+
+From: {sender}
+Subject: {subject}
+
+The reply should:
+- Acknowledge receipt
+- Be friendly and professional
+- Not ask unnecessary questions
+"""
+
+    response = groq_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[
+            {"role": "system", "content": "You write professional email replies."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.4
     )
 
-    message = MIMEText(body)
+    return response.choices[0].message.content.strip()
+
+# ---------------- EMAIL SEND ----------------
+def create_reply(to_email, subject, ai_body):
+    message = MIMEText(ai_body)
     message['to'] = to_email
     message['subject'] = "Re: " + subject
 
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     return {'raw': raw}
 
-def send_reply(service, to_email, subject):
+def send_reply(service, to_email, subject, ai_body):
     service.users().messages().send(
         userId='me',
-        body=create_reply(to_email, subject)
+        body=create_reply(to_email, subject, ai_body)
     ).execute()
 
 def mark_replied(service, msg_id, label_id):
@@ -119,28 +151,28 @@ def read_and_reply(service):
         headers = msg_data['payload']['headers']
         email = {h['name']: h['value'] for h in headers}
 
-        sender_raw = email.get('From', '')
-        sender = extract_email(sender_raw)
+        sender = extract_email(email.get('From', ''))
         subject = email.get('Subject', '(No Subject)')
         label_ids = msg_data.get('labelIds', [])
 
         print("From:", sender)
         print("Subject:", subject)
 
-        # Skip if already replied
         if label_id in label_ids:
             print("[SKIP] Already replied\n")
             continue
 
-        # 🔒 ONLY REPLY TO SPECIFIC EMAIL
         if sender.lower() != ALLOWED_EMAIL.lower():
             print("[SKIP] Sender not allowed\n")
             continue
 
-        send_reply(service, sender, subject)
+        print("[AI] Generating reply...")
+        ai_reply = generate_ai_reply(sender, subject)
+
+        send_reply(service, sender, subject, ai_reply)
         mark_replied(service, msg['id'], label_id)
 
-        print("[REPLIED] Auto reply sent\n")
+        print("[REPLIED] AI auto-reply sent\n")
 
 # ---------------- RUN ----------------
 if __name__ == '__main__':
